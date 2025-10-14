@@ -21,6 +21,20 @@ const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onToggle, messages, onSendMes
     scrollToBottom();
   }, [messages, isLoading]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isOpen) {
+        onToggle();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onToggle]);
+
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {

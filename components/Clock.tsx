@@ -13,23 +13,15 @@ const Clock: React.FC = () => {
   const timeString = date.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: true,
   });
 
-  const dateString = date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
-
   return (
-    <div className="flex flex-col items-end text-right">
-      <div className="font-semibold text-sm text-indigo-600 tabular-nums">
+    <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5">
+      <span className="font-mono font-bold text-sm text-indigo-600 dark:text-indigo-400 tabular-nums tracking-wider">
         {timeString}
-      </div>
-      <div className="text-xs text-slate-500">
-        {dateString}
-      </div>
+      </span>
     </div>
   );
 };

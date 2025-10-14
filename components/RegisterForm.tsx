@@ -1,9 +1,45 @@
 import React, { useState } from 'react';
-import { User } from '../types';
 
 interface RegisterFormProps {
-  onRegister: (user: Omit<User, 'role' | 'username' | 'purchasedBookIds'>) => void;
+  onRegister: (user: {name: string, email: string, password?: string}) => void;
 }
+
+const PasswordStrengthMeter: React.FC<{ password: string }> = ({ password }) => {
+    const getStrength = (pass: string) => {
+        let score = 0;
+        if (!pass) return 0;
+        if (pass.length > 8) score++;
+        if (pass.match(/[a-z]/)) score++;
+        if (pass.match(/[A-Z]/)) score++;
+        if (pass.match(/[0-9]/)) score++;
+        if (pass.match(/[^a-zA-Z0-9]/)) score++;
+        return score;
+    };
+
+    const strength = getStrength(password);
+    const labels = ['Too Short', 'Weak', 'Medium', 'Strong', 'Very Strong'];
+    const colors = ['bg-slate-300', 'bg-red-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-500'];
+    const widths = ['w-0', 'w-1/5', 'w-2/5', 'w-3/5', 'w-4/5', 'w-full'];
+
+    const strengthIndex = password.length === 0 ? 0 : (password.length <= 8 ? 1 : strength);
+
+
+    return (
+        <div className="mt-1 h-4">
+          {password.length > 0 && (
+            <>
+              <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2">
+                  <div className={`h-2 rounded-full transition-all ${colors[strengthIndex]} ${widths[strengthIndex]}`}></div>
+              </div>
+              <p className="text-xs text-right mt-1 font-semibold text-slate-500 dark:text-slate-400">
+                  {labels[strengthIndex]}
+              </p>
+            </>
+          )}
+        </div>
+    );
+};
+
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onRegister }) => {
   const [name, setName] = useState('');
@@ -16,6 +52,10 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegister }) => {
     e.preventDefault();
     if (!name || !password || !email) {
       alert("Name, email, and password are required.");
+      return;
+    }
+    if(password.length < 6) {
+      alert("Password must be at least 6 characters long.");
       return;
     }
     onRegister({ name, password, email });
@@ -60,7 +100,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegister }) => {
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Create a password"
+              placeholder="Create a password (min. 6 characters)"
               required
               className="flex-1 p-3 border-none bg-transparent focus:ring-0 text-slate-800 dark:text-slate-200"
             />
@@ -73,6 +113,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegister }) => {
               <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
             </button>
           </div>
+          <PasswordStrengthMeter password={password} />
         </div>
         <button
           type="submit"

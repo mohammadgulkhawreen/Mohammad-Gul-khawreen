@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Book, Purchase } from '../types';
 
 interface BinancePaymentModalProps {
@@ -18,13 +18,22 @@ const InfoRow: React.FC<{ label: string, value: string | number }> = ({ label, v
 
 
 const BinancePaymentModal: React.FC<BinancePaymentModalProps> = ({ isOpen, onClose, onSuccess, purchase, book }) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+
   if (!isOpen || !purchase || !book) return null;
 
-  const handleSimulatePayment = () => {
-      // In a real app, you would wait for a webhook from Binance.
-      // Here, we just simulate a successful payment immediately.
-      onSuccess(purchase.id);
+  const handleConfirmPayment = (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsProcessing(true);
+      // Simulate an automatic verification process
+      setTimeout(() => {
+        if(purchase) {
+          onSuccess(purchase.id);
+        }
+        setIsProcessing(false);
+      }, 2000);
   };
+
 
   return (
     <div
@@ -48,8 +57,8 @@ const BinancePaymentModal: React.FC<BinancePaymentModalProps> = ({ isOpen, onClo
           </button>
         </div>
         
-        <div className="space-y-4">
-            <p className="text-slate-600 dark:text-slate-300 text-center">Scan the QR code with your Binance App to complete the payment.</p>
+        <form onSubmit={handleConfirmPayment} className="space-y-4">
+            <p className="text-slate-600 dark:text-slate-300 text-center">Please scan the QR code with your Binance app to complete the payment.</p>
             
             <div className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50">
               <InfoRow label="Book" value={book.title} />
@@ -58,23 +67,31 @@ const BinancePaymentModal: React.FC<BinancePaymentModalProps> = ({ isOpen, onClo
             </div>
 
             <div className="flex justify-center my-4">
-                {/* Mock QR Code from an external service */}
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=pay:binance?coin=USDT&amount=${book.price}&ref=${purchase.referenceCode}&bgcolor=f1f5f9`} alt="Binance QR Code" className="w-48 h-48 rounded-lg border-4 border-slate-200 dark:border-slate-700" />
             </div>
 
-             <div className="mt-6 text-center">
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">For demonstration purposes:</p>
-                <button
-                    onClick={handleSimulatePayment}
-                    className="w-full bg-emerald-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-emerald-600 transition-all duration-300 flex items-center justify-center gap-2"
-                >
-                    <i className="fas fa-check-circle"></i>
-                    Simulate Successful Payment
-                </button>
+            <div className="mt-4 text-center p-3 bg-indigo-50 dark:bg-indigo-900/40 rounded-lg border border-indigo-200 dark:border-indigo-500/50">
+                <p className="text-sm text-slate-600 dark:text-slate-400">After payment, click the button below to automatically verify your transaction.</p>
             </div>
             
-            <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-4">Once your payment is confirmed, the book will be automatically added to your 'My Purchases' section.</p>
-        </div>
+            <button
+                type="submit"
+                disabled={isProcessing}
+                className="w-full bg-emerald-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-emerald-600 transition-all duration-300 flex items-center justify-center gap-2 mt-2 disabled:bg-slate-400 dark:disabled:bg-slate-600"
+            >
+              {isProcessing ? (
+                <>
+                  <i className="fas fa-spinner fa-spin"></i> Verifying Payment...
+                </>
+              ) : (
+                <>
+                  <i className="fas fa-check-circle"></i> Confirm Payment
+                </>
+              )}
+            </button>
+            
+            <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-2">This is a simulated payment. Your payment will be confirmed automatically.</p>
+        </form>
       </div>
     </div>
   );

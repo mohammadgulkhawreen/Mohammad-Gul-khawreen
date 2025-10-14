@@ -1,17 +1,23 @@
+
+
 import React from 'react';
-import { Book, User, Review, Section } from '../types';
+import { Book, Review, Section } from '../types';
 import BookCard from './BookCard';
+import { useAuth } from '../AuthContext';
 
 interface MyPurchasesProps {
   books: Book[];
-  currentUser: User | null;
   reviews: Review[];
   onAddReview: (bookId: string, rating: number, comment: string) => void;
   onRequestSummary: (id: string) => void;
+  onRequestPreview: (id: string) => void;
   onNavigate: (section: Section) => void;
+  onDownload: (id: string) => void;
 }
 
-const MyPurchases: React.FC<MyPurchasesProps> = ({ books, currentUser, reviews, onAddReview, onRequestSummary, onNavigate }) => {
+const MyPurchases: React.FC<MyPurchasesProps> = ({ books, reviews, onAddReview, onRequestSummary, onRequestPreview, onNavigate, onDownload }) => {
+  const { currentUser } = useAuth();
+  
   return (
     <>
       <h2 className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 mb-6 flex items-center gap-3">
@@ -24,10 +30,11 @@ const MyPurchases: React.FC<MyPurchasesProps> = ({ books, currentUser, reviews, 
             <BookCard 
                 key={book.id} 
                 book={book} 
-                currentUser={currentUser} 
                 onDelete={() => {}} // Cannot delete purchased books
                 onPurchase={() => {}} // Already purchased
+                onDownload={onDownload}
                 onRequestSummary={onRequestSummary}
+                onRequestPreview={onRequestPreview}
                 reviews={reviews}
                 onAddReview={onAddReview}
                 onNavigate={onNavigate}

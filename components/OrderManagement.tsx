@@ -9,9 +9,19 @@ interface OrderManagementProps {
 
 const OrderManagement: React.FC<OrderManagementProps> = ({ purchases, books, users }) => {
 
-  const getBookTitle = (bookId: string) => books.find(b => b.id === bookId)?.title || 'Unknown Book';
-  const getUserName = (userId: string) => users.find(u => u.username === userId)?.name || 'Unknown User';
-  const getUserEmail = (userId: string) => users.find(u => u.username === userId)?.email || 'N/A';
+  const bookMap = React.useMemo(() => 
+    new Map(books.map(book => [book.id, book.title])),
+    [books]
+  );
+  
+  const userMap = React.useMemo(() => 
+    new Map(users.map(user => [user.username, { name: user.name, email: user.email }])),
+    [users]
+  );
+
+  const getBookTitle = (bookId: string) => bookMap.get(bookId) || 'Unknown Book';
+  const getUserName = (userId: string) => userMap.get(userId)?.name || 'Unknown User';
+  const getUserEmail = (userId: string) => userMap.get(userId)?.email || 'N/A';
 
   const pendingPurchases = purchases.filter(p => p.status === 'pending').sort((a,b) => b.createdAt - a.createdAt);
   const completedPurchases = purchases.filter(p => p.status === 'completed').sort((a,b) => b.createdAt - a.createdAt);

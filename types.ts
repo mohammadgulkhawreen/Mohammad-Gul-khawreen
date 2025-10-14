@@ -1,3 +1,5 @@
+
+
 export enum Section {
   Register = 'register',
   Login = 'login',
@@ -10,22 +12,15 @@ export enum Section {
   MyPurchases = 'my-purchases',
   Orders = 'orders',
   Settings = 'settings',
-}
-
-export enum PaymentMethod {
-  Binance = 'binance',
-  Card = 'card',
-  Mobile = 'mobile',
+  Profile = 'profile',
 }
 
 export interface User {
-  username: string;
+  username: string; // This will be the user's email
   name: string;
   email: string;
-  password?: string;
+  password?: string; // Storing plaintext for simplicity in this local-only version.
   role: 'admin' | 'user';
-  resetCode?: string;
-  resetCodeExpiry?: number;
   purchasedBookIds: string[];
 }
 
@@ -34,21 +29,22 @@ export interface Book {
   title: string;
   author: string;
   language: string;
-  coverDataUrl: string; // Store cover as data URL
-  pdfDataUrl: string;   // Store PDF as data URL
-  pdfFileName: string; // Store original PDF file name
-  pdfMimeType: string; // Store PDF mime type
-  uploadedBy: string;
+  coverUrl: string;     // URL or Base64 Data URL
+  pdfUrl: string;       // URL or Base64 Data URL
+  pdfFileName: string;  // Store original PDF file name
+  uploadedBy: string;   // user email
   status: 'pending' | 'approved';
   isForSale: boolean;
   price: number;
   tags: string[];
+  downloadCount: number;
+  isFeatured?: boolean;
 }
 
 export interface Review {
   id: string;
   bookId: string;
-  username: string;
+  username: string; // user email
   rating: number; // 1-5
   comment: string;
   createdAt: number; // timestamp
@@ -68,21 +64,30 @@ export interface ToastMessage {
   type: 'success' | 'error';
 }
 
-export interface Purchase {
-  id: string;
-  userId: string;
-  bookId: string;
-  status: 'pending' | 'completed';
-  createdAt: number;
-  referenceCode: string;
-}
-
-export interface Settings {
-  binanceApiKey: string;
-  binanceApiSecret: string;
-}
-
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+}
+
+export enum PaymentMethod {
+  Binance = 'binance',
+  Card = 'card',
+  Mobile = 'mobile',
+}
+
+export interface Purchase {
+  id: string;
+  bookId: string;
+  userId: string; // user email
+  amount: number;
+  referenceCode: string;
+  status: 'pending' | 'completed';
+  paymentMethod: PaymentMethod | null;
+  createdAt: number;
+}
+
+export interface Settings {
+  id: string; // Should be a singleton document ID, e.g., 'main'
+  binanceApiKey: string;
+  binanceApiSecret: string;
 }

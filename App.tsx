@@ -1,5 +1,7 @@
+
+
 import React, { useState, useEffect } from 'react';
-import { Section, User, Book, ToastMessage, Review, Ad, Purchase, Settings, PaymentMethod, ChatMessage } from './types';
+import { Section, User, Book, ToastMessage, Review, Ad, ChatMessage, Purchase, PaymentMethod, Settings } from './types';
 import Header from './components/Header';
 import RegisterForm from './components/RegisterForm';
 import LoginForm from './components/LoginForm';
@@ -15,38 +17,83 @@ import AdManager from './components/AdManager';
 import ForgotPasswordForm from './components/ForgotPasswordForm';
 import OrderManagement from './components/OrderManagement';
 import PaymentSettings from './components/PaymentSettings';
+import Chatbot from './components/Chatbot';
+import Footer from './components/Footer';
+import { GoogleGenAI, Type, Chat } from "@google/genai";
+import * as db from './db';
+
 import PaymentMethodSelectionModal from './components/PaymentMethodSelectionModal';
 import BinancePaymentModal from './components/BinancePaymentModal';
 import CardPaymentModal from './components/CardPaymentModal';
 import MobilePaymentModal from './components/MobilePaymentModal';
-import Chatbot from './components/Chatbot';
-import Footer from './components/Footer';
-import { GoogleGenAI, Type, Chat } from "@google/genai";
+import BookPreviewModal from './components/BookPreviewModal';
+import PublishGuideModal from './components/PublishGuideModal';
+import GithubPublishGuideModal from './components/GithubPublishGuideModal';
+import Profile from './components/Profile';
+import InfoModal from './components/InfoModal';
+import { useAuth } from './AuthContext';
 
-// Utility to convert file to Base64 Data URL
-const fileToDataUrl = (file: File): Promise<string> => {
+
+// Extend the Window interface for TypeScript to recognize the deferredInstallPrompt
+declare global {
+  interface Window {
+    deferredInstallPrompt: any;
+  }
+}
+
+// Utility to convert a data URL string back to a File object for AI processing
+async function dataUrlToFile(dataUrl: string, fileName: string): Promise<File> {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], fileName, { type: blob.type });
+}
+
+
+// Utility to resize and convert an image file to a JPEG Blob for upload
+const processAndResizeImage = (file: File): Promise<Blob> => {
     return new Promise((resolve, reject) => {
+        const MAX_WIDTH = 800; // Max width for the cover image
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
         reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            if (!event.target?.result) {
+                return reject(new Error('Failed to read file for resizing.'));
+            }
+            img.src = event.target.result as string;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    return reject(new Error('Could not get canvas context'));
+                }
+
+                let { width, height } = img;
+
+                // Calculate new dimensions while maintaining aspect ratio
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Convert to JPEG with a reasonable quality
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        resolve(blob);
+                    } else {
+                        reject(new Error('Canvas to Blob conversion failed.'));
+                    }
+                }, 'image/jpeg', 0.85);
+            };
+            img.onerror = (error) => reject(new Error('Image could not be loaded. It might be corrupted or in an unsupported format.'));
+        };
+        reader.onerror = (error) => reject(error);
     });
 };
-
-// Utility to convert Data URL back to a File object
-function dataURLtoFile(dataurl: string, filename: string): File {
-    const arr = dataurl.split(',');
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch) throw new Error("Invalid data URL");
-    const mime = mimeMatch[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new File([u8arr], filename, { type: mime });
-}
 
 
 // Utility function to convert a File to a GoogleGenerativeAI.Part
@@ -78,34 +125,44 @@ interface EditState {
     book: Book | null;
 }
 
-interface PaymentState {
-  isOpen: boolean;
-  purchase: Purchase | null;
+interface PreviewState {
+    isOpen: boolean;
+    book: Book | null;
+}
+
+interface PaymentFlowState {
+    purchase: Purchase | null;
+    book: Book | null;
+    methodSelectionOpen: boolean;
+    activeMethod: PaymentMethod | null;
 }
 
 type Theme = 'light' | 'dark';
 
 const App: React.FC = () => {
+  const { currentUser, isInitialized } = useAuth();
   const [activeSection, setActiveSection] = useState<Section>(Section.Books);
   const [users, setUsers] = useState<User[]>([]);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [settings, setSettings] = useState<Settings>({ binanceApiKey: '', binanceApiSecret: '' });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [isInitialized, setIsInitialized] = useState(false);
   const [theme, setTheme] = useState<Theme>('light');
   
   const [summarizeState, setSummarizeState] = useState<SummarizeState>({ isOpen: false, book: null, summary: '', isLoading: false, error: '' });
   const [editState, setEditState] = useState<EditState>({ isOpen: false, book: null });
+  const [previewState, setPreviewState] = useState<PreviewState>({ isOpen: false, book: null });
+  const [forgotPasswordInfo, setForgotPasswordInfo] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
 
-  // Payment Modal States
-  const [paymentMethodSelectionState, setPaymentMethodSelectionState] = useState<PaymentState>({ isOpen: false, purchase: null });
-  const [binancePaymentState, setBinancePaymentState] = useState<PaymentState>({ isOpen: false, purchase: null });
-  const [cardPaymentState, setCardPaymentState] = useState<PaymentState>({ isOpen: false, purchase: null });
-  const [mobilePaymentState, setMobilePaymentState] = useState<PaymentState>({ isOpen: false, purchase: null });
+  // New states for payment feature
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [settings, setSettings] = useState<Settings>({ id: 'main', binanceApiKey: '', binanceApiSecret: '' });
+  const [paymentFlow, setPaymentFlow] = useState<PaymentFlowState>({
+      purchase: null,
+      book: null,
+      methodSelectionOpen: false,
+      activeMethod: null,
+  });
 
   // Chatbot states
   const [chat, setChat] = useState<Chat | null>(null);
@@ -116,6 +173,70 @@ const App: React.FC = () => {
   // Global Search State
   const [searchQuery, setSearchQuery] = useState('');
 
+  // PWA Install Prompt State
+  const [installPromptEvent, setInstallPromptEvent] = useState<any>(null);
+  const [canShowInstallButton, setCanShowInstallButton] = useState(false);
+
+  // Publish Guide Modal State
+  const [isPublishGuideOpen, setIsPublishGuideOpen] = useState(false);
+  const [isGithubPublishGuideOpen, setIsGithubPublishGuideOpen] = useState(false);
+
+  const handleRequestPublishGuide = () => {
+    setIsPublishGuideOpen(true);
+  };
+
+  const handleClosePublishGuide = () => {
+    setIsPublishGuideOpen(false);
+  };
+
+  const handleRequestGithubPublishGuide = () => {
+    setIsGithubPublishGuideOpen(true);
+  };
+
+  const handleCloseGithubPublishGuide = () => {
+    setIsGithubPublishGuideOpen(false);
+  };
+
+
+  useEffect(() => {
+    const handleInstallPromptReady = (e: CustomEvent) => {
+      setInstallPromptEvent(e.detail);
+    };
+
+    window.addEventListener('pwa-install-ready', handleInstallPromptReady as EventListener);
+
+    if (window.deferredInstallPrompt) {
+      setInstallPromptEvent(window.deferredInstallPrompt);
+    }
+    
+    return () => {
+      window.removeEventListener('pwa-install-ready', handleInstallPromptReady as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+        setCanShowInstallButton(true);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleInstallClick = () => {
+    if (!installPromptEvent) return;
+    installPromptEvent.prompt();
+    installPromptEvent.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+            showToast('اپلیکیشن په بریالیتوب سره انسټال شو!', 'success');
+        } else {
+            showToast('انسټال لغوه شو. تاسو کولی شئ دا وروسته د خپل براوزر مینو څخه انسټال کړئ.', 'error');
+        }
+        setInstallPromptEvent(null);
+        window.deferredInstallPrompt = null;
+    });
+  };
+
+
   // Theme initialization
   useEffect(() => {
     const savedTheme = localStorage.getItem('khawreen_theme') as Theme | null;
@@ -124,7 +245,6 @@ const App: React.FC = () => {
     setTheme(initialTheme);
   }, []);
 
-  // Theme effect
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -138,12 +258,11 @@ const App: React.FC = () => {
     setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
   };
 
-  // Initialize Chatbot
   useEffect(() => {
     if (process.env.API_KEY) {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const availableSections = Object.values(Section).join(', ');
-        const systemInstruction = `You are a friendly and helpful AI assistant for 'Khawreen Library', a digital Pashto library. Your primary goals are: 1. Help users discover books. 2. Answer questions about the library and its features. 3. Help users navigate the website. When a user asks for help with navigation (e.g., "take me to upload", "how do I see my books?"), you MUST respond with ONLY a special command in the format [NAVIGATE:SECTION_NAME]. The available sections are: ${availableSections}. Do not add any other text around the command. For example, if the user asks "How can I upload a book?", you should respond with [NAVIGATE:upload]. When a user asks about books, I will provide you with a list of available books in JSON format. Use this list to answer their questions. Be conversational and helpful. You can speak English or Pashto, depending on the user's language.`;
+        const systemInstruction = `You are a friendly and helpful AI assistant for 'Khawreen Library', a digital library. Your primary goals are: 1. Help users discover books. 2. Answer questions about the library and its features. 3. Help users navigate the website. When a user asks for help with navigation (e.g., "take me to upload", "how do I see my books?"), you MUST respond with ONLY a special command in the format [NAVIGATE:SECTION_NAME]. The available sections are: ${availableSections}. Do not add any other text around the command. For example, if the user asks "How can I upload a book?", you should respond with [NAVIGATE:upload]. When a user asks about books, I will provide you with a list of available books in JSON format. Use this list to answer their questions. Be conversational and helpful. Your primary language is English. Respond in English unless the user explicitly requests another language.`;
         
         const chatInstance = ai.chats.create({
             model: 'gemini-2.5-flash',
@@ -154,56 +273,70 @@ const App: React.FC = () => {
         setChatMessages([{ role: 'model', text: 'Hello! How can I help you explore the Khawreen Library today?' }]);
     }
   }, []);
-
-  // Load state from localStorage on initial render
+  
+  // Local DB Data Loading
   useEffect(() => {
-    try {
-      const storedUsers = localStorage.getItem('khawreen_users');
-      if (storedUsers) setUsers(JSON.parse(storedUsers));
+    const unsubscribers: (() => void)[] = [];
 
-      const storedBooks = localStorage.getItem('khawreen_books');
-      if (storedBooks) setBooks(JSON.parse(storedBooks));
+    const collections: (keyof typeof db.collections)[] = ['books', 'reviews', 'ads', 'purchases', 'users'];
+    const setters: { [key: string]: React.Dispatch<React.SetStateAction<any>> } = {
+        books: setBooks, reviews: setReviews, ads: setAds, purchases: setPurchases, users: setUsers
+    };
 
-      const storedCurrentUser = localStorage.getItem('khawreen_currentUser');
-      if (storedCurrentUser) setCurrentUser(JSON.parse(storedCurrentUser));
+    // Listen for data changes in each collection
+    collections.forEach(collectionName => {
+        const unsubscribe = db.onSnapshot(collectionName, (data) => {
+            if(collectionName === 'books') {
+                const booksWithDefaults = data.map((book: Book) => ({...book, downloadCount: book.downloadCount || 0, }));
+                setBooks(booksWithDefaults);
+            } else {
+                setters[collectionName](data);
+            }
+        });
+        unsubscribers.push(unsubscribe);
+    });
+    
+    // Listen for settings changes
+    const settingsUnsubscribe = db.onSettingsSnapshot((settingsData) => {
+        if(settingsData) {
+            setSettings(settingsData);
+        }
+    });
+    unsubscribers.push(settingsUnsubscribe);
 
-      const storedReviews = localStorage.getItem('khawreen_reviews');
-      if (storedReviews) setReviews(JSON.parse(storedReviews));
-      
-      const storedAds = localStorage.getItem('khawreen_ads');
-      if (storedAds) setAds(JSON.parse(storedAds));
-      
-      const storedPurchases = localStorage.getItem('khawreen_purchases');
-      if (storedPurchases) setPurchases(JSON.parse(storedPurchases));
-
-      const storedSettings = localStorage.getItem('khawreen_settings');
-      if (storedSettings) setSettings(JSON.parse(storedSettings));
-
-    } catch (error) {
-      console.error("Failed to load data from localStorage", error);
-      // Clear potentially corrupted storage
-      localStorage.clear();
-    } finally {
-      setIsInitialized(true);
-    }
+    return () => unsubscribers.forEach(unsub => unsub());
   }, []);
 
-  // Save state to localStorage whenever it changes
+
+    // --- Preview Modal Handlers ---
+  const handleRequestPreview = (bookId: string) => {
+      const bookToPreview = books.find(b => b.id === bookId);
+      if (bookToPreview) {
+          setPreviewState({ isOpen: true, book: bookToPreview });
+      }
+  };
+
+  // Effect to handle deep links for books
   useEffect(() => {
-    if (!isInitialized) return;
-    try {
-      localStorage.setItem('khawreen_users', JSON.stringify(users));
-      localStorage.setItem('khawreen_books', JSON.stringify(books));
-      localStorage.setItem('khawreen_currentUser', JSON.stringify(currentUser));
-      localStorage.setItem('khawreen_reviews', JSON.stringify(reviews));
-      localStorage.setItem('khawreen_ads', JSON.stringify(ads));
-      localStorage.setItem('khawreen_purchases', JSON.stringify(purchases));
-      localStorage.setItem('khawreen_settings', JSON.stringify(settings));
-    } catch (error) {
-      console.error("Failed to save data to localStorage", error);
-      showToast('Could not save session data. Storage may be full.', 'error');
+    if (!isInitialized || books.length === 0) {
+      return;
     }
-  }, [users, books, currentUser, reviews, ads, purchases, settings, isInitialized]);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const bookIdToPreview = urlParams.get('book');
+
+    if (bookIdToPreview) {
+      const bookExists = books.find(b => b.id === bookIdToPreview && b.status === 'approved');
+      if (bookExists) {
+        handleRequestPreview(bookIdToPreview);
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.delete('book');
+        window.history.replaceState({}, '', newUrl.toString());
+      } else {
+        showToast('The linked book could not be found or is not available.', 'error');
+      }
+    }
+  }, [isInitialized, books]);
 
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -215,66 +348,64 @@ const App: React.FC = () => {
     setToasts(prevToasts => prevToasts.filter(toast => toast.id !== id));
   };
   
-  const handleRegister = (user: Omit<User, 'role' | 'username' | 'purchasedBookIds'>) => {
-    const username = user.email;
-    if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
-        showToast('An account with this email already exists.', 'error');
-        return;
+ const handleRegister = async (userData: {name: string; email: string; password?: string;}) => {
+    if (!userData.password) {
+      showToast('Password is required for registration.', 'error');
+      return;
     }
-    const newUser: User = { ...user, username, role: users.length === 0 ? 'admin' : 'user', purchasedBookIds: [] };
-    setUsers(prevUsers => [...prevUsers, newUser]);
-    showToast(`Registration successful! ${newUser.role === 'admin' ? 'You are the site Admin.' : ''} Please login.`, 'success');
-    setActiveSection(Section.Login);
+    try {
+        const userCount = await db.getUserCount();
+        const isAdmin = userCount === 0;
+        await db.register(userData.email, userData.password, userData.name, isAdmin);
+        showToast(`Registration successful! ${isAdmin ? 'You are the site Admin.' : ''} Please login.`, 'success');
+        setActiveSection(Section.Login);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        showToast(message, 'error');
+    }
   };
 
-  const handleLogin = (credentials: { email: string; password?: string }) => {
-    const userToLogin = users.find(u => u.email.toLowerCase() === credentials.email.toLowerCase());
-    if (!userToLogin || userToLogin.password !== credentials.password) {
-        showToast('Invalid email or password.', 'error');
+
+  const handleLogin = async (credentials: { email: string; password?: string }) => {
+     if (!credentials.password) {
+        showToast('Password is required.', 'error');
         return;
     }
-    setCurrentUser(userToLogin);
-    showToast(`Welcome back, ${userToLogin.name || userToLogin.username}!`);
-    setActiveSection(Section.Books);
+    try {
+      const user = await db.login(credentials.email, credentials.password);
+      showToast(`Welcome back, ${user.name || user.email}!`);
+      setActiveSection(Section.Books);
+    } catch (error) {
+       const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+       showToast(message, 'error');
+    }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    showToast('You have been logged out.', 'success');
-    setActiveSection(Section.Books);
+  const handleLogout = async () => {
+    try {
+        await db.logout();
+        showToast('You have been logged out.', 'success');
+        setActiveSection(Section.Books);
+    } catch (error) {
+        showToast('Failed to log out.', 'error');
+    }
   };
   
-  const handleForgotPasswordRequest = (email: string) => {
-    const userIndex = users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
-    if (userIndex === -1) {
-        showToast("If an account with that email exists, a reset code has been sent.", 'success');
-        return;
+ const handleForgotPasswordRequest = async (email: string) => {
+    try {
+        const password = await db.sendPasswordReset(email);
+        if (password) {
+            setForgotPasswordInfo({
+                isOpen: true,
+                message: `Because this app runs locally without a server, your password is shown here for recovery:\n\n${password}`
+            });
+        } else {
+            showToast("If an account exists for that email, recovery info has been prepared.", 'success');
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        showToast(message, 'error');
     }
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const resetCodeExpiry = Date.now() + 10 * 60 * 1000;
-    const updatedUsers = [...users];
-    updatedUsers[userIndex] = { ...updatedUsers[userIndex], resetCode, resetCodeExpiry };
-    setUsers(updatedUsers);
-    showToast(`Password reset code: ${resetCode}`, 'success');
-  };
-
-  const handleResetPassword = (email: string, code: string, newPassword: string) => {
-      const userIndex = users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
-      if (userIndex === -1) {
-          showToast('Invalid email or reset code.', 'error');
-          return;
-      }
-      const user = users[userIndex];
-      if (user.resetCode !== code || (user.resetCodeExpiry && Date.now() > user.resetCodeExpiry)) {
-          showToast('Invalid or expired reset code. Please try again.', 'error');
-          return;
-      }
-      const { resetCode: rCode, resetCodeExpiry: rCodeExpiry, ...userWithoutReset } = user;
-      const updatedUsers = [...users];
-      updatedUsers[userIndex] = { ...userWithoutReset, password: newPassword };
-      setUsers(updatedUsers);
-      showToast('Your password has been reset successfully. Please login.', 'success');
-      setActiveSection(Section.Login);
   };
 
   const handleAddBook = async (title: string, author: string, language: string, coverFile: File, pdfFile: File, isForSale: boolean, price: number) => {
@@ -284,355 +415,405 @@ const App: React.FC = () => {
         setActiveSection(Section.Login);
         throw new Error(errorMessage);
     }
-    const MAX_SIZE_MB = 3;
-    const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
-    if (coverFile.size > MAX_SIZE_BYTES || pdfFile.size > MAX_SIZE_BYTES) {
-        const errorMessage = `Files cannot be larger than ${MAX_SIZE_MB}MB due to browser storage limits.`;
-        showToast(errorMessage, 'error');
-        throw new Error(errorMessage);
-    }
-    let coverDataUrl: string, pdfDataUrl: string;
+    
+    let coverBlob: Blob;
     try {
-        coverDataUrl = await fileToDataUrl(coverFile);
-        pdfDataUrl = await fileToDataUrl(pdfFile);
+        coverBlob = await processAndResizeImage(coverFile);
     } catch (error) {
-        const errorMessage = 'Failed to process files. They may be corrupted or too large.';
+        const errorMessage = 'Failed to process cover image. It may be corrupted or in an unsupported format.';
         showToast(errorMessage, 'error');
         throw new Error(errorMessage);
     }
-    let tags: string[] = [];
+
     try {
-        if (process.env.API_KEY) {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const pdfFileForAnalysis = dataURLtoFile(pdfDataUrl, pdfFile.name);
-            const pdfPart = await fileToGenerativePart(pdfFileForAnalysis);
-            const prompt = `Analyze this book. Generate 5-7 relevant tags in English. Examples: 'History', 'Poetry', 'Fiction'. Return as a JSON object: {"tags": ["tag1", "tag2"]}.`;
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: { parts: [pdfPart, { text: prompt }] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: { type: Type.OBJECT, properties: { tags: { type: Type.ARRAY, items: { type: Type.STRING } } } }
+        const bookId = `book-${Date.now()}`;
+        // Store files as Base64 data URLs in local storage
+        const coverUrl = await db.uploadFile(coverBlob, `covers/${bookId}.jpg`);
+        const pdfUrl = await db.uploadFile(pdfFile, `pdfs/${bookId}.pdf`);
+
+        let tags: string[] = [];
+        try {
+            if (process.env.API_KEY) {
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                const pdfPart = await fileToGenerativePart(pdfFile);
+                const prompt = `Analyze this book. Generate 5-7 relevant tags in English. Examples: 'History', 'Poetry', 'Fiction'. Return as a JSON object: {"tags": ["tag1", "tag2"]}.`;
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: { parts: [pdfPart, { text: prompt }] },
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: { type: Type.OBJECT, properties: { tags: { type: Type.ARRAY, items: { type: Type.STRING } } } }
+                    }
+                });
+                const jsonResponse = JSON.parse(response.text);
+                if (jsonResponse?.tags) {
+                    tags = jsonResponse.tags;
+                    showToast('AI-powered tags generated!', 'success');
                 }
-            });
-            const jsonResponse = JSON.parse(response.text);
-            if (jsonResponse?.tags) {
-                tags = jsonResponse.tags;
-                showToast('AI-powered tags generated!', 'success');
             }
+        } catch (e) {
+            console.error("Failed to generate tags:", e);
+            showToast('Book uploaded, but AI tag generation failed.', 'error');
         }
-    } catch (e) {
-        console.error("Failed to generate tags:", e);
-        showToast('Book uploaded, but tag generation failed.', 'error');
-    }
-    const newBook: Book = {
-      id: `book-${Date.now()}`, title, author, language, coverDataUrl, pdfDataUrl, pdfFileName: pdfFile.name,
-      pdfMimeType: pdfFile.type, uploadedBy: currentUser.username, status: 'pending', isForSale,
-      price: isForSale ? price : 0, tags,
-    };
-    setBooks(prevBooks => [newBook, ...prevBooks]);
-    showToast('Book submitted for admin approval!');
-    setActiveSection(Section.MyBooks);
-  };
+        
+        const newBook: Book = {
+          id: bookId, title, author, language, coverUrl, pdfUrl, pdfFileName: pdfFile.name,
+          uploadedBy: currentUser.email, status: 'pending', isForSale,
+          price: isForSale ? price : 0, tags, downloadCount: 0,
+        };
+        
+        await db.add('books', newBook, newBook.id);
+        showToast('Book submitted for admin approval!');
+        setActiveSection(Section.MyBooks);
 
-  const handleDeleteBook = (bookId: string) => {
-    if(window.confirm('Are you sure you want to delete this book?')) {
-        setBooks(prevBooks => prevBooks.filter(book => book.id !== bookId));
-        setReviews(prevReviews => prevReviews.filter(review => review.bookId !== bookId));
-        setPurchases(prevPurchases => prevPurchases.filter(p => p.bookId !== bookId));
-        showToast('Book removed successfully.', 'success');
+    } catch (uploadError) {
+        const errorMessage = 'Failed to process files for local storage.';
+        showToast(errorMessage, 'error');
+        throw new Error(errorMessage);
     }
   };
 
-  const handleApproveBook = (bookId: string) => {
-    setBooks(prevBooks => prevBooks.map(book => book.id === bookId ? { ...book, status: 'approved' } : book));
+  const handleDeleteBook = async (bookId: string) => {
+    const bookToDelete = books.find(b => b.id === bookId);
+    if(window.confirm('Are you sure you want to delete this book? This will also remove it from storage permanently.')) {
+        if (bookToDelete) {
+          await db.deleteBook(bookToDelete);
+          showToast('Book removed successfully.', 'success');
+        } else {
+          showToast('Could not find book to delete.', 'error');
+        }
+    }
+  };
+
+  const handleDownloadBook = async (bookId: string) => {
+    await db.incrementDownloadCount(bookId);
+  };
+
+  const handleApproveBook = async (bookId: string) => {
+    await db.update('books', bookId, { status: 'approved' });
     showToast('Book approved and published!', 'success');
   };
   
-  const handleAddReview = (bookId: string, rating: number, comment: string) => {
+  const handleAddReview = async (bookId: string, rating: number, comment: string) => {
       if (!currentUser) {
         showToast('You must be logged in to leave a review.', 'error');
         setActiveSection(Section.Login);
         return;
       }
       const newReview: Review = {
-        id: `review-${Date.now()}`, bookId, username: currentUser.username, rating, comment, createdAt: Date.now(),
+        id: `review-${Date.now()}`, bookId, username: currentUser.email, rating, comment, createdAt: Date.now(),
       };
-      setReviews(prevReviews => [newReview, ...prevReviews]);
+      await db.add('reviews', newReview, newReview.id);
       showToast('Your review has been submitted!', 'success');
   };
 
-  const handleRequestPurchase = (bookId: string) => {
+  const handleAcquireFreeBook = async (bookId: string) => {
+    if (await db.addBookToUserLibrary(bookId)) {
+      showToast('Book added to your library successfully!', 'success');
+    } else {
+      showToast('Could not add book to library.', 'error');
+    }
+  };
+  
+  const handleRequestAcquisition = async (bookId: string) => {
     if (!currentUser) {
-      showToast('You must be logged in to purchase a book.', 'error');
+      showToast('You must be logged in to get a book.', 'error');
       setActiveSection(Section.Login);
       return;
     }
-    const bookToPurchase = books.find(b => b.id === bookId);
-    if (bookToPurchase) {
+    const bookToAcquire = books.find(b => b.id === bookId);
+    if (!bookToAcquire) return;
+
+    if (currentUser.purchasedBookIds.includes(bookId)) {
+      showToast('You already own this book.', 'success');
+      setActiveSection(Section.MyPurchases);
+      return;
+    }
+
+    if (!bookToAcquire.isForSale || bookToAcquire.price <= 0) {
+      await handleAcquireFreeBook(bookId);
+    } else {
+      const referenceCode = `KHW-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      const purchaseId = `purchase-${Date.now()}`;
       const newPurchase: Purchase = {
-        id: `purchase-${Date.now()}`, userId: currentUser.username, bookId, status: 'pending',
-        createdAt: Date.now(), referenceCode: `KHW-${Date.now().toString().slice(-6)}`,
+        id: purchaseId, bookId: bookToAcquire.id, userId: currentUser.email,
+        amount: bookToAcquire.price, referenceCode: referenceCode, status: 'pending',
+        paymentMethod: null, createdAt: Date.now(),
       };
-      setPurchases(prev => [...prev, newPurchase]);
-      setPaymentMethodSelectionState({ isOpen: true, purchase: newPurchase });
+      await db.add('purchases', newPurchase, purchaseId);
+      setPaymentFlow({
+        purchase: newPurchase, book: bookToAcquire,
+        methodSelectionOpen: true, activeMethod: null,
+      });
     }
-  };
-  
-  const handleSelectPaymentMethod = (method: PaymentMethod, purchase: Purchase) => {
-    setPaymentMethodSelectionState({ isOpen: false, purchase: null });
-    switch (method) {
-      case PaymentMethod.Binance:
-        setBinancePaymentState({ isOpen: true, purchase });
-        break;
-      case PaymentMethod.Card:
-        setCardPaymentState({ isOpen: true, purchase });
-        break;
-      case PaymentMethod.Mobile:
-        setMobilePaymentState({ isOpen: true, purchase });
-        break;
-    }
-  };
-  
-  const handlePaymentSuccess = (purchaseId: string) => {
-    const purchaseIndex = purchases.findIndex(p => p.id === purchaseId);
-    if (purchaseIndex === -1) {
-        showToast('Purchase record not found.', 'error');
-        return;
-    }
-    const purchase = purchases[purchaseIndex];
-    const userIndex = users.findIndex(u => u.username === purchase.userId);
-    if (userIndex === -1) {
-        showToast('User for this purchase not found.', 'error');
-        return;
-    }
-    const updatedPurchases = [...purchases];
-    updatedPurchases[purchaseIndex] = { ...purchase, status: 'completed' };
-    setPurchases(updatedPurchases);
-
-    const updatedUsers = [...users];
-    const user = updatedUsers[userIndex];
-    const updatedUser = { ...user, purchasedBookIds: [...user.purchasedBookIds, purchase.bookId] };
-    updatedUsers[userIndex] = updatedUser;
-    setUsers(updatedUsers);
-
-    if (currentUser?.username === user.username) {
-        setCurrentUser(updatedUser);
-    }
-
-    handleClosePaymentModals();
-    showToast('Payment successful! The book has been added to your purchases.', 'success');
   };
 
   const handleClosePaymentModals = () => {
-    setPaymentMethodSelectionState({ isOpen: false, purchase: null });
-    setBinancePaymentState({ isOpen: false, purchase: null });
-    setCardPaymentState({ isOpen: false, purchase: null });
-    setMobilePaymentState({ isOpen: false, purchase: null });
+    setPaymentFlow({ purchase: null, book: null, methodSelectionOpen: false, activeMethod: null });
   };
-
-
-  const handleRequestSummary = async (bookId: string) => {
-    const book = books.find(b => b.id === bookId);
-    if (!book) return;
-    setSummarizeState({ isOpen: true, book, isLoading: true, summary: '', error: '' });
-    try {
-      if (!process.env.API_KEY) throw new Error("API key is not configured.");
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const pdfFile = dataURLtoFile(book.pdfDataUrl, book.pdfFileName);
-      const pdfPart = await fileToGenerativePart(pdfFile);
-      const prompt = "Summarize this book's plot, themes, and audience in a concise Pashto paragraph.";
-      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [pdfPart, {text: prompt}] } });
-      setSummarizeState(s => ({ ...s, summary: response.text, isLoading: false }));
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-      setSummarizeState(s => ({ ...s, error: `Could not generate summary: ${errorMessage}`, isLoading: false }));
+  
+  const handleSelectPaymentMethod = async (method: PaymentMethod, purchase: Purchase) => {
+    await db.update('purchases', purchase.id, { paymentMethod: method });
+    setPaymentFlow(prev => ({ ...prev, methodSelectionOpen: false, activeMethod: method }));
+  };
+  
+  const handlePaymentSuccess = async (purchaseId: string) => {
+    const purchase = purchases.find(p => p.id === purchaseId);
+    if (!purchase) {
+        showToast('An error occurred during payment confirmation.', 'error');
+        handleClosePaymentModals();
+        return;
     }
-  };
-  
-  const handleCloseSummary = () => setSummarizeState({ isOpen: false, book: null, isLoading: false, summary: '', error: '' });
-  
-  const handleRequestEdit = (bookId: string) => {
-    const bookToEdit = books.find(b => b.id === bookId);
-    if (bookToEdit) setEditState({ isOpen: true, book: bookToEdit });
-  };
 
-  const handleCloseEdit = () => setEditState({ isOpen: false, book: null });
+    await db.addBookToUserLibrary(purchase.bookId);
+    await db.update('purchases', purchaseId, { status: 'completed' });
 
-  const handleUpdateBook = (bookId: string, updates: Partial<Pick<Book, 'title' | 'author' | 'language' | 'isForSale' | 'price' | 'tags'>>) => {
-    setBooks(prevBooks => prevBooks.map(book => book.id === bookId ? { ...book, ...updates } : book));
-    showToast('Book details updated successfully!', 'success');
+    handleClosePaymentModals();
+    showToast('Payment successful! The book has been added to your library.', 'success');
+    setActiveSection(Section.MyPurchases);
   };
 
-  const handleSaveSettings = (newSettings: Settings) => {
-    setSettings(newSettings);
-    showToast('Payment settings saved successfully!', 'success');
-  };
-
-  const handleAddAd = (adData: Omit<Ad, 'id'>) => {
-    const newAd: Ad = { id: `ad-${Date.now()}`, ...adData };
-    setAds(prevAds => [...prevAds, newAd]);
+  const handleAddAd = async (adData: Omit<Ad, 'id'>) => {
+    const adId = `ad-${Date.now()}`;
+    const newAd: Ad = { id: adId, ...adData };
+    await db.add('ads', newAd, adId);
     showToast('Advertisement created successfully!', 'success');
   };
 
-  const handleUpdateAd = (adId: string, adData: Omit<Ad, 'id'>) => {
-    setAds(prevAds => prevAds.map(ad => (ad.id === adId ? { id: adId, ...adData } : ad)));
+  const handleUpdateAd = async (adId: string, adData: Omit<Ad, 'id'>) => {
+    await db.update('ads', adId, adData);
     showToast('Advertisement updated successfully!', 'success');
   };
 
-  const handleDeleteAd = (adId: string) => {
+  const handleDeleteAd = async (adId: string) => {
     if (window.confirm('Are you sure you want to delete this advertisement?')) {
-      setAds(prevAds => prevAds.filter(ad => ad.id !== adId));
+      await db.deleteItem('ads', adId);
       showToast('Advertisement deleted.', 'success');
     }
   };
 
+  const handleSaveSettings = async (newSettings: Omit<Settings, 'id'>) => {
+    await db.putSettings(newSettings);
+    showToast('Settings saved successfully!', 'success');
+    setActiveSection(Section.Admin);
+  };
+  
+  const handleUpdateBookDetails = async (bookId: string, updates: Partial<Book>) => {
+    await db.update('books', bookId, updates);
+    setEditState({ isOpen: false, book: null });
+    showToast('Book details updated successfully!', 'success');
+  };
+
   const handleSendMessage = async (message: string) => {
     if (!chat) return;
-
-    setChatMessages(prev => [...prev, { role: 'user', text: message }]);
     setIsChatLoading(true);
-
+    setChatMessages(prev => [...prev, { role: 'user', text: message }]);
+    
     const bookListForContext = books
-        .filter(b => b.status === 'approved')
-        .map(b => ({ title: b.title, author: b.author, language: b.language, price: b.price, tags: b.tags }));
-    const contextPrompt = `Here is the current context:\nCurrent User: ${currentUser ? currentUser.name : 'Guest'}\nList of available books: ${JSON.stringify(bookListForContext)}\n\nUser's message: "${message}"`;
+      .filter(b => b.status === 'approved')
+      .map(b => ({ title: b.title, author: b.author, language: b.language, tags: b.tags, price: b.price }))
+      .slice(0, 20);
 
+    const contextMessage = `Here is a list of available books in JSON format: ${JSON.stringify(bookListForContext)}. Use this information to answer any book-related questions.`;
+    
     try {
-        const response = await chat.sendMessage({ message: contextPrompt });
-        const responseText = response.text;
+        const response = await chat.sendMessage({ message: `${contextMessage}\n\nUser query: ${message}` });
+        const responseText = response.text.trim();
         
-        const navRegex = /\[NAVIGATE:([\w-]+)\]/;
+        const navRegex = /\[NAVIGATE:(\w+(?:-\w+)*)\]/;
         const match = responseText.match(navRegex);
 
         if (match && match[1]) {
             const section = match[1] as Section;
             if (Object.values(Section).includes(section)) {
                 setActiveSection(section);
-                setIsChatOpen(false); // Close chat on navigation
-                const navConfirmationMsg = `Sure, taking you to the ${section.replace(/-/g, ' ')} page.`;
-                showToast(navConfirmationMsg);
+                setIsChatOpen(false);
+                 showToast(`Navigating you to the ${section.replace('-',' ')} page.`, 'success');
             } else {
-                const errorMsg = "I'm sorry, I can't navigate to that section.";
-                setChatMessages(prev => [...prev, { role: 'model', text: errorMsg }]);
+                setChatMessages(prev => [...prev, { role: 'model', text: `Sorry, I can't navigate to "${section}". It's not a valid section.` }]);
             }
         } else {
-            setChatMessages(prev => [...prev, { role: 'model', text: responseText }]);
+             setChatMessages(prev => [...prev, { role: 'model', text: responseText }]);
         }
-    } catch (error) {
-        console.error("Chat error:", error);
-        const errorMsg = "I'm sorry, I encountered an error. Please try again.";
-        setChatMessages(prev => [...prev, { role: 'model', text: errorMsg }]);
+    } catch (e) {
+        console.error("Chat error:", e);
+        setChatMessages(prev => [...prev, { role: 'model', text: 'Sorry, I encountered an error. Please try again.' }]);
     } finally {
         setIsChatLoading(false);
     }
   };
+  
+  const handleRequestSummary = async (bookId: string) => {
+      const bookToSummarize = books.find(b => b.id === bookId);
+      if (!bookToSummarize) return;
 
-  const handleSetSearchQuery = (query: string) => {
-    setSearchQuery(query);
-    // Navigate to books section if user starts searching from another page
-    if (query && activeSection !== Section.Books) {
-      setActiveSection(Section.Books);
+      setSummarizeState({ isOpen: true, book: bookToSummarize, summary: '', isLoading: true, error: '' });
+
+      if (!process.env.API_KEY) {
+          setSummarizeState(s => ({ ...s, isLoading: false, error: 'API key is not configured. Cannot generate summary.' }));
+          return;
+      }
+      
+      try {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          const pdfFile = await dataUrlToFile(bookToSummarize.pdfUrl, bookToSummarize.pdfFileName);
+          const filePart = await fileToGenerativePart(pdfFile);
+
+          const prompt = `Please provide a concise, one-paragraph summary of this book in the book's original language, which is ${bookToSummarize.language}.`;
+          const genAIResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [filePart, { text: prompt }] },
+          });
+
+          setSummarizeState(s => ({ ...s, summary: genAIResponse.text, isLoading: false }));
+      } catch (e) {
+          console.error("Summarization error:", e);
+          const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+          setSummarizeState(s => ({ ...s, isLoading: false, error: `Failed to generate summary. ${errorMessage}` }));
+      }
+  };
+  const handleCloseSummary = () => setSummarizeState({ isOpen: false, book: null, summary: '', isLoading: false, error: '' });
+
+  const handleRequestEdit = (bookId: string) => {
+    const bookToEdit = books.find(b => b.id === bookId);
+    if (bookToEdit) {
+      setEditState({ isOpen: true, book: bookToEdit });
     }
   };
+  const handleCloseEdit = () => setEditState({ isOpen: false, book: null });
+  
+  const handleClosePreview = () => setPreviewState({ isOpen: false, book: null });
 
-  const renderSection = () => {
-    const containerClasses = "bg-white dark:bg-slate-800 rounded-xl shadow-md p-6 sm:p-8 animate-fade-in";
-    const approvedBooks = books.filter(b => b.status === 'approved');
-    const pendingPurchaseBookIds = purchases.filter(p => p.userId === currentUser?.username && p.status === 'pending').map(p => p.bookId);
+  const approvedBooks = books.filter(book => book.status === 'approved');
+  const pendingBooks = books.filter(book => book.status === 'pending');
+  const myBooks = books.filter(book => currentUser && book.uploadedBy === currentUser.email);
+  const myPurchasedBooks = books.filter(book => currentUser && currentUser.purchasedBookIds.includes(book.id));
 
-    switch (activeSection) {
-      case Section.Register: return <div className={containerClasses}><RegisterForm onRegister={handleRegister} /></div>;
-      case Section.Login: return <div className={containerClasses}><LoginForm onLogin={handleLogin} onNavigate={setActiveSection} /></div>;
-      case Section.ForgotPassword: return <div className={containerClasses}><ForgotPasswordForm onForgotPasswordRequest={handleForgotPasswordRequest} onResetPassword={handleResetPassword} /></div>;
-      case Section.Upload: return <div className={containerClasses}><UploadForm onUpload={handleAddBook} /></div>;
-      case Section.Admin:
-        if (currentUser?.role !== 'admin') { setActiveSection(Section.Books); return null; }
-        const pendingBooks = books.filter(b => b.status === 'pending' && b.uploadedBy !== currentUser.username);
-        return <div className={containerClasses}><AdminPanel books={pendingBooks} currentUser={currentUser} onApprove={handleApproveBook} onReject={handleDeleteBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} reviews={reviews} onAddReview={handleAddReview} onNavigate={setActiveSection} /></div>;
-      case Section.MyBooks:
-        if (!currentUser) { setActiveSection(Section.Login); return null; }
-        const myBooks = books.filter(b => b.uploadedBy === currentUser.username).sort((a, b) => (a.status > b.status) ? 1 : -1);
-        return <div className={containerClasses}><MyBooks books={myBooks} currentUser={currentUser} onDelete={handleDeleteBook} onApprove={handleApproveBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} reviews={reviews} onAddReview={handleAddReview} onNavigate={setActiveSection} /></div>;
-      case Section.MyPurchases:
-          if (!currentUser) { setActiveSection(Section.Login); return null; }
-          const purchasedBooks = books.filter(b => currentUser.purchasedBookIds.includes(b.id));
-          return <div className={containerClasses}><MyPurchases books={purchasedBooks} currentUser={currentUser} reviews={reviews} onAddReview={handleAddReview} onRequestSummary={handleRequestSummary} onNavigate={setActiveSection} /></div>;
-      case Section.AdsManager:
-        if (currentUser?.role !== 'admin') { setActiveSection(Section.Books); return null; }
-        return <div className={containerClasses}><AdManager ads={ads} onAdd={handleAddAd} onUpdate={handleUpdateAd} onDelete={handleDeleteAd} /></div>;
-      case Section.Orders:
-        if (currentUser?.role !== 'admin') { setActiveSection(Section.Books); return null; }
-        return <div className={containerClasses}><OrderManagement purchases={purchases} books={books} users={users} /></div>;
-      case Section.Settings:
-        if (currentUser?.role !== 'admin') { setActiveSection(Section.Books); return null; }
-        return <div className={containerClasses}><PaymentSettings settings={settings} onSave={handleSaveSettings} /></div>;
-      case Section.Books:
-      default:
-        return <div className={containerClasses}><BookList books={approvedBooks} ads={ads} currentUser={currentUser} onDelete={handleDeleteBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} onPurchase={handleRequestPurchase} reviews={reviews} onAddReview={handleAddReview} pendingPurchaseBookIds={pendingPurchaseBookIds} searchQuery={searchQuery} onNavigate={setActiveSection} /></div>;
-    }
-  };
-
-  if (!isInitialized) return <div className="flex justify-center items-center min-h-screen"><i className="fas fa-spinner fa-spin text-4xl text-indigo-500"></i></div>;
-
+  const pendingApprovalCount = currentUser?.role === 'admin' ? pendingBooks.length : 0;
+  
+  if (!isInitialized) {
+      return <div className="flex justify-center items-center h-screen bg-slate-100 dark:bg-slate-900">
+          <div className="text-center">
+              <i className="fas fa-spinner fa-spin text-4xl text-indigo-500"></i>
+              <p className="mt-4 text-lg font-semibold text-slate-700 dark:text-slate-200">Loading Library...</p>
+          </div>
+      </div>;
+  }
+  
   return (
-    <div className="min-h-screen text-slate-800 dark:text-slate-200 flex flex-col">
-      <Header onNavigate={setActiveSection} currentUser={currentUser} onLogout={handleLogout} searchQuery={searchQuery} setSearchQuery={handleSetSearchQuery} theme={theme} toggleTheme={toggleTheme} />
-      <main className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8 w-full flex-grow">
-        {renderSection()}
+    <div className="flex flex-col min-h-screen">
+      <Header
+        activeSection={activeSection}
+        onNavigate={setActiveSection}
+        onLogout={handleLogout}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        pendingApprovalCount={pendingApprovalCount}
+        installPrompt={canShowInstallButton && installPromptEvent}
+        onInstallClick={handleInstallClick}
+        onRequestPublishGuide={handleRequestPublishGuide}
+        onRequestGithubPublishGuide={handleRequestGithubPublishGuide}
+      />
+      <main className="flex-grow container mx-auto p-4 sm:p-6 md:p-8">
+        <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-xl shadow-md border border-slate-200 dark:border-slate-700">
+          {activeSection === Section.Register && <RegisterForm onRegister={handleRegister} />}
+          {activeSection === Section.Login && <LoginForm onLogin={handleLogin} onNavigate={setActiveSection} />}
+          {activeSection === Section.ForgotPassword && <ForgotPasswordForm onForgotPasswordRequest={handleForgotPasswordRequest} />}
+          {activeSection === Section.Upload && <UploadForm onUpload={handleAddBook} showToast={showToast} />}
+          {activeSection === Section.Books && <BookList books={approvedBooks} ads={ads} reviews={reviews} onAddReview={handleAddReview} onDelete={handleDeleteBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} onRequestPreview={handleRequestPreview} onPurchase={handleRequestAcquisition} onDownload={handleDownloadBook} searchQuery={searchQuery} onNavigate={setActiveSection} />}
+          {activeSection === Section.Admin && currentUser?.role === 'admin' && <AdminPanel books={pendingBooks} reviews={reviews} onAddReview={handleAddReview} onApprove={handleApproveBook} onReject={handleDeleteBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} onRequestPreview={handleRequestPreview} onNavigate={setActiveSection} onDownload={handleDownloadBook} />}
+          {activeSection === Section.MyBooks && <MyBooks books={myBooks} onDelete={handleDeleteBook} onApprove={handleApproveBook} onRequestSummary={handleRequestSummary} onRequestEdit={handleRequestEdit} onRequestPreview={handleRequestPreview} reviews={reviews} onAddReview={handleAddReview} onNavigate={setActiveSection} onDownload={handleDownloadBook} />}
+          {activeSection === Section.MyPurchases && <MyPurchases books={myPurchasedBooks} reviews={reviews} onAddReview={handleAddReview} onRequestSummary={handleRequestSummary} onRequestPreview={handleRequestPreview} onNavigate={setActiveSection} onDownload={handleDownloadBook}/>}
+          {activeSection === Section.AdsManager && currentUser?.role === 'admin' && <AdManager ads={ads} onAdd={handleAddAd} onUpdate={handleUpdateAd} onDelete={handleDeleteAd} />}
+          {activeSection === Section.Orders && currentUser?.role === 'admin' && <OrderManagement purchases={purchases} books={books} users={users} />}
+          {activeSection === Section.Settings && currentUser?.role === 'admin' && <PaymentSettings settings={settings} onSave={handleSaveSettings} />}
+          {activeSection === Section.Profile && currentUser && <Profile showToast={showToast} />}
+        </div>
       </main>
       <Footer onNavigate={setActiveSection} />
-      <div className="fixed top-4 right-4 z-[100] flex flex-col gap-3">
-        {toasts.map(toast => <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => closeToast(toast.id)} />)}
+      <div className="fixed bottom-0 right-0 p-4 space-y-3 z-[100]">
+        {toasts.map(toast => (
+          <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => closeToast(toast.id)} />
+        ))}
       </div>
-      {summarizeState.isOpen && <SummarizeModal isOpen={summarizeState.isOpen} onClose={handleCloseSummary} bookTitle={summarizeState.book?.title || ''} summary={summarizeState.summary} isLoading={summarizeState.isLoading} error={summarizeState.error} />}
-      {editState.isOpen && <EditBookModal isOpen={editState.isOpen} onClose={handleCloseEdit} book={editState.book} onUpdate={handleUpdateBook} />}
-      
-      {paymentMethodSelectionState.isOpen && (
-        <PaymentMethodSelectionModal
-          isOpen={paymentMethodSelectionState.isOpen}
-          onClose={handleClosePaymentModals}
-          onSelectMethod={handleSelectPaymentMethod}
-          purchase={paymentMethodSelectionState.purchase}
-          book={books.find(b => b.id === paymentMethodSelectionState.purchase?.bookId)}
+      {summarizeState.isOpen && (
+        <SummarizeModal
+            isOpen={summarizeState.isOpen}
+            onClose={handleCloseSummary}
+            bookTitle={summarizeState.book?.title || ''}
+            bookLanguage={summarizeState.book?.language || 'English'}
+            summary={summarizeState.summary}
+            isLoading={summarizeState.isLoading}
+            error={summarizeState.error}
         />
       )}
-      {binancePaymentState.isOpen && (
-        <BinancePaymentModal
-          isOpen={binancePaymentState.isOpen}
-          onClose={handleClosePaymentModals}
-          onSuccess={handlePaymentSuccess}
-          purchase={binancePaymentState.purchase}
-          book={books.find(b => b.id === binancePaymentState.purchase?.bookId)}
+      {editState.isOpen && (
+        <EditBookModal
+            isOpen={editState.isOpen}
+            onClose={handleCloseEdit}
+            book={editState.book}
+            onUpdate={handleUpdateBookDetails}
         />
       )}
-      {cardPaymentState.isOpen && (
-        <CardPaymentModal
-          isOpen={cardPaymentState.isOpen}
-          onClose={handleClosePaymentModals}
-          onSuccess={handlePaymentSuccess}
-          purchase={cardPaymentState.purchase}
-          book={books.find(b => b.id === cardPaymentState.purchase?.bookId)}
-        />
-      )}
-      {mobilePaymentState.isOpen && (
-        <MobilePaymentModal
-          isOpen={mobilePaymentState.isOpen}
-          onClose={handleClosePaymentModals}
-          onSuccess={handlePaymentSuccess}
-          purchase={mobilePaymentState.purchase}
-          book={books.find(b => b.id === mobilePaymentState.purchase?.bookId)}
-        />
-      )}
-      {chat && (
-        <Chatbot
-            isOpen={isChatOpen}
-            onToggle={() => setIsChatOpen(!isChatOpen)}
-            messages={chatMessages}
-            onSendMessage={handleSendMessage}
-            isLoading={isChatLoading}
+      {previewState.isOpen && (
+        <BookPreviewModal
+            isOpen={previewState.isOpen}
+            onClose={handleClosePreview}
+            book={previewState.book}
         />
        )}
+
+      {paymentFlow.methodSelectionOpen && (
+        <PaymentMethodSelectionModal
+          isOpen={paymentFlow.methodSelectionOpen}
+          onClose={handleClosePaymentModals}
+          onSelectMethod={handleSelectPaymentMethod}
+          purchase={paymentFlow.purchase}
+          book={books.find(b => b.id === paymentFlow.purchase?.bookId)}
+        />
+      )}
+      {paymentFlow.activeMethod === PaymentMethod.Binance && (
+        <BinancePaymentModal
+          isOpen={true}
+          onClose={handleClosePaymentModals}
+          onSuccess={handlePaymentSuccess}
+          purchase={paymentFlow.purchase}
+          book={books.find(b => b.id === paymentFlow.purchase?.bookId)}
+        />
+      )}
+      {paymentFlow.activeMethod === PaymentMethod.Card && (
+        <CardPaymentModal
+          isOpen={true}
+          onClose={handleClosePaymentModals}
+          onSuccess={handlePaymentSuccess}
+          purchase={paymentFlow.purchase}
+          book={books.find(b => b.id === paymentFlow.purchase?.bookId)}
+        />
+      )}
+      {paymentFlow.activeMethod === PaymentMethod.Mobile && (
+        <MobilePaymentModal
+          isOpen={true}
+          onClose={handleClosePaymentModals}
+          onSuccess={handlePaymentSuccess}
+          purchase={paymentFlow.purchase}
+          book={books.find(b => b.id === paymentFlow.purchase?.bookId)}
+        />
+      )}
+      
+      {chat && <Chatbot isOpen={isChatOpen} onToggle={() => setIsChatOpen(!isChatOpen)} messages={chatMessages} onSendMessage={handleSendMessage} isLoading={isChatLoading} />}
+
+      <InfoModal
+        isOpen={forgotPasswordInfo.isOpen}
+        onClose={() => setForgotPasswordInfo({ isOpen: false, message: '' })}
+        title="Password Recovery"
+      >
+        <p className="whitespace-pre-wrap font-mono bg-slate-100 dark:bg-slate-700 p-3 rounded-md text-center">{forgotPasswordInfo.message}</p>
+      </InfoModal>
+
+      <PublishGuideModal isOpen={isPublishGuideOpen} onClose={handleClosePublishGuide} />
+      <GithubPublishGuideModal isOpen={isGithubPublishGuideOpen} onClose={handleCloseGithubPublishGuide} />
     </div>
   );
 };

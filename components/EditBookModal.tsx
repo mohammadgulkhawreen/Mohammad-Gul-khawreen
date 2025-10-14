@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Book } from '../types';
+import { useAuth } from '../AuthContext';
 
 interface EditBookModalProps {
   isOpen: boolean;
   onClose: () => void;
   book: Book | null;
-  onUpdate: (bookId: string, updates: Partial<Pick<Book, 'title' | 'author' | 'language' | 'isForSale' | 'price' | 'tags'>>) => void;
+  onUpdate: (bookId: string, updates: Partial<Pick<Book, 'title' | 'author' | 'language' | 'isForSale' | 'price' | 'tags' | 'isFeatured'>>) => void;
 }
 
 const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, onUpdate }) => {
+  const { currentUser } = useAuth();
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [language, setLanguage] = useState('');
@@ -16,6 +18,7 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
   const [price, setPrice] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [isFeatured, setIsFeatured] = useState(false);
 
   useEffect(() => {
     if (book) {
@@ -25,6 +28,7 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
       setIsForSale(book.isForSale);
       setPrice(book.price > 0 ? String(book.price) : '');
       setTags(book.tags || []);
+      setIsFeatured(book.isFeatured || false);
     }
   }, [book]);
 
@@ -56,7 +60,7 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
         alert('Please enter a valid price for the book.');
         return;
     }
-    const updates: Partial<Pick<Book, 'title' | 'author' | 'language' | 'isForSale' | 'price' | 'tags'>> = {
+    const updates: Partial<Pick<Book, 'title' | 'author' | 'language' | 'isForSale' | 'price' | 'tags' | 'isFeatured'>> = {
         title,
         author,
         language,
@@ -64,6 +68,9 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
         price: isForSale ? Number(price) : 0,
         tags,
     };
+    if (currentUser?.role === 'admin') {
+        updates.isFeatured = isFeatured;
+    }
     onUpdate(book.id, updates);
     onClose();
   };
@@ -112,7 +119,7 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
             </div>
             
             <div className="form-group flex flex-col gap-2">
-              <label htmlFor="edit-language" className="font-semibold text-slate-700 dark:text-slate-300">Language (ژبه)</label>
+              <label htmlFor="edit-language" className="font-semibold text-slate-700 dark:text-slate-300">Language</label>
               <div className="relative">
                 <select
                   id="edit-language"
@@ -121,10 +128,10 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
                   required
                   className="w-full p-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-600 transition bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 appearance-none"
                 >
-                  <option value="Pashto">پښتو (Pashto)</option>
-                  <option value="Dari">دری (Dari)</option>
-                  <option value="English">انګلیسي (English)</option>
-                  <option value="Other">نور (Other)</option>
+                  <option value="Pashto">Pashto</option>
+                  <option value="Dari">Dari</option>
+                  <option value="English">English</option>
+                  <option value="Other">Other</option>
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-700 dark:text-slate-400">
                     <i className="fas fa-chevron-down h-5 w-5"></i>
@@ -184,6 +191,24 @@ const EditBookModal: React.FC<EditBookModalProps> = ({ isOpen, onClose, book, on
                     </div>
                 )}
             </div>
+            
+            {currentUser?.role === 'admin' && (
+                <div className="p-4 bg-indigo-50 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-500/50 rounded-lg animate-fade-in">
+                    <div className="flex items-center gap-3">
+                        <input
+                            type="checkbox"
+                            id="edit-isFeatured"
+                            checked={isFeatured}
+                            onChange={(e) => setIsFeatured(e.target.checked)}
+                            className="h-5 w-5 rounded border-gray-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-200 dark:bg-slate-600"
+                        />
+                        <label htmlFor="edit-isFeatured" className="font-semibold text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
+                          <i className="fas fa-star"></i> Feature this book on the main page
+                        </label>
+                    </div>
+                </div>
+            )}
+
 
             <div className="mt-4 flex justify-end gap-3">
                 <button 

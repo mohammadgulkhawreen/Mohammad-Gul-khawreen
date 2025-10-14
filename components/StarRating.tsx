@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface StarRatingProps {
   rating: number;
@@ -7,21 +7,23 @@ interface StarRatingProps {
 }
 
 const StarRating: React.FC<StarRatingProps> = ({ rating, onRatingChange, isInteractive = false }) => {
+  const [hoverRating, setHoverRating] = useState(0);
+  
   return (
-    <div className="flex items-center gap-0.5">
+    <div 
+      className="flex items-center gap-0.5"
+      onMouseLeave={() => isInteractive && setHoverRating(0)}
+    >
       {[1, 2, 3, 4, 5].map((star) => {
-        const isFull = rating >= star;
-        const isHalf = rating > star - 1 && rating < star;
+        const displayRating = hoverRating || rating;
         
-        let iconClass = 'fa-star text-slate-300 dark:text-slate-600'; // Empty star
-        if (isInteractive) {
-            if(rating >= star) iconClass = 'fa-star text-amber-400';
-        } else {
-             if (isFull) {
-                iconClass = 'fa-star text-amber-400';
-             } else if (isHalf) {
-                iconClass = 'fa-star-half-alt text-amber-400';
-             }
+        let iconClass = 'fa-star text-slate-300 dark:text-slate-600'; // Default: Empty star
+
+        if (displayRating >= star) {
+          iconClass = 'fa-star text-amber-400'; // Full star
+        } else if (displayRating > star - 1 && displayRating < star && !hoverRating) {
+          // Only show half-star for the actual rating, not for hover state
+          iconClass = 'fa-star-half-alt text-amber-400'; // Half star
         }
        
         return (
@@ -29,8 +31,7 @@ const StarRating: React.FC<StarRatingProps> = ({ rating, onRatingChange, isInter
             key={star}
             className={`fas ${iconClass} ${isInteractive ? 'cursor-pointer transition-transform hover:scale-125' : ''}`}
             onClick={() => isInteractive && onRatingChange && onRatingChange(star)}
-            onMouseEnter={isInteractive ? (e) => (e.currentTarget.style.color = '#fbbf24') : undefined}
-            onMouseLeave={isInteractive ? (e) => (e.currentTarget.style.color = '') : undefined}
+            onMouseEnter={() => isInteractive && setHoverRating(star)}
             role={isInteractive ? 'button' : 'img'}
             aria-label={isInteractive ? `Rate ${star} stars` : `${rating} out of 5 stars`}
           />
